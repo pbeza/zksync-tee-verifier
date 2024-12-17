@@ -1,0 +1,1 @@
+solady/=lib/automata-dcap-attestation/lib/automata-on-chain-pccs/lib/solady/src/
