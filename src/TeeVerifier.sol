@@ -2,6 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {AutomataDcapAttestation} from "automata-dcap-attestation/contracts/AutomataDcapAttestation.sol";
+import {V3QuoteVerifier} from "automata-dcap-attestation/contracts/verifiers/V3QuoteVerifier.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 // import "./LibPublicInput.sol";
@@ -87,7 +88,7 @@ contract TeeVerifier is Ownable {
         delete instances[addr];
     }
 
-    function registerInstance(bytes calldata _quote) external onlyOwner {
+    function registerInstance(bytes calldata _quote) external {
         this.registerInstance(_quote, 0);
     }
 
@@ -97,7 +98,7 @@ contract TeeVerifier is Ownable {
     function registerInstance(
         bytes calldata _quote,
         uint64 _validity_delay_in_seconds
-    ) external onlyOwner {
+    ) external {
         (bool verified, bytes memory errMsg) = attest.verifyAndAttestOnChain(
             _quote
         );
