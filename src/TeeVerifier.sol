@@ -2,16 +2,9 @@
 pragma solidity ^0.8.13;
 
 import {AutomataDcapAttestation} from "automata-dcap-attestation/contracts/AutomataDcapAttestation.sol";
-// import {V3Quote} from "automata-dcap-attestation/contracts/types/V3Structs.sol";
-// import "@automata-network/on-chain-pccs";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-// import "src/shared/common/EssentialContract.sol";
-// import "src/shared/common/LibStrings.sol";
-// import "../automata-attestation/interfaces/IAttestation.sol";
-// import "../based/ITaikoL1.sol";
-// import "../based/TaikoData.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 // import "./LibPublicInput.sol";
-// import "./IVerifier.sol";
 
 /// @title TeeVerifier
 /// @notice Registers public keys to verify state transition signatures created by the off-chain TEE
@@ -25,7 +18,7 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 /// - Taiko SGX verifier:
 ///   https://github.com/taikoxyz/taiko-mono/blob/de92b28c03b747845a8a1aa26991307d1ed47fd0/packages/protocol/contracts/layer1/verifiers/SgxVerifier.sol
 /// @custom:security-contact security@matterlabs.dev
-contract TeeVerifier {
+contract TeeVerifier is Ownable {
     /// @dev Validity of key pairs (instances) attested and registered in this contract.
     struct TeeInstance {
         uint64 validSince;
@@ -50,7 +43,7 @@ contract TeeVerifier {
 
     uint256[48] private __gap;
 
-    constructor(address _attest) {
+    constructor(address _attest) Ownable(msg.sender) {
         require(_attest != address(0), TEE_RA_NOT_SUPPORTED());
         attest = AutomataDcapAttestation(_attest);
     }
@@ -68,69 +61,65 @@ contract TeeVerifier {
         uint256 validUntil
     );
 
+    /// @notice Emitted when an TEE instance is deleted.
+    /// @param addr The address of the TEE instance.
+    event InstanceDeleted(address indexed addr);
+
     error TEE_ALREADY_ATTESTED();
     error TEE_INVALID_INSTANCE();
     error TEE_RA_NOT_SUPPORTED();
     error TEE_INVALID_ATTESTATION(string errorMsg);
     // error TEE_INVALID_PROOF();
 
-    // /// @notice Initializes the contract.
-    // /// @param _owner The owner of this contract. msg.sender will be used if this value is zero.
-    // /// @param _rollupAddressManager The address of the {AddressManager} contract.
-    // function init(address _owner, address _rollupAddressManager) external initializer {
-    //     __Essential_init(_owner, _rollupAddressManager);
-    // }
-
-    // /// @notice Deletes SGX instances from the registry.
-    // /// @param _ids The ids array of SGX instances.
-    // function deleteInstances(uint256[] calldata _ids)
-    //     external
-    //     onlyFromOwnerOrNamed(LibStrings.B_SGX_WATCHDOG)
-    // {
-    //     for (uint256 i; i < _ids.length; ++i) {
-    //         uint256 idx = _ids[i];
-
-    //         require(instances[idx].addr != address(0), TEE_INVALID_INSTANCE());
-
-    //         emit InstanceDeleted(idx, instances[idx].addr);
-
-    //         delete instances[idx];
-    //     }
-    // }
-
-    function registerInstance(bytes calldata quote) external {
-        this.registerInstance(quote, 0);
+    /// @notice Deletes TEE instances from the registry.
+    /// @param _addresses The array of TEE instance addresses to be deleted.
+    function deleteInstances(address[] calldata _addresses) external onlyOwner {
+        for (uint256 i; i < _addresses.length; ++i) {
+            this.deleteInstance(_addresses[i]);
+        }
     }
 
-    /// @notice Adds an SGX instance after verifying the attestation.
-    /// @param quote The attestation quote.
-    /// @param validity_delay_in_seconds Delay in seconds before an instance becomes valid.
+    /// @notice Deletes a single TEE instance from the registry.
+    /// @param addr The address of the SGX instance to be deleted.
+    function deleteInstance(address addr) external onlyOwner {
+        require(addr != address(0), TEE_INVALID_INSTANCE());
+        emit InstanceDeleted(addr);
+        delete instances[addr];
+    }
+
+    function registerInstance(bytes calldata _quote) external onlyOwner {
+        this.registerInstance(_quote, 0);
+    }
+
+    /// @notice Adds an TEE instance after verifying the attestation.
+    /// @param _quote The attestation quote.
+    /// @param _validity_delay_in_seconds Delay in seconds before an instance becomes valid.
     function registerInstance(
-        bytes calldata quote,
-        uint64 validity_delay_in_seconds
-    ) external {
+        bytes calldata _quote,
+        uint64 _validity_delay_in_seconds
+    ) external onlyOwner {
         (bool verified, bytes memory errMsg) = attest.verifyAndAttestOnChain(
-            quote
+            _quote
         );
 
         require(verified, TEE_INVALID_ATTESTATION(string(errMsg)));
-        address addr = address(bytes20(quote[28:48]));
+        address addr = address(bytes20(_quote[28:48]));
         uint64 valid_since = uint64(block.timestamp) +
-            validity_delay_in_seconds;
+            _validity_delay_in_seconds;
         _addInstance(addr, valid_since);
     }
 
-    function _addInstance(address addr, uint64 validSince) private {
-        require(addr != address(0), TEE_INVALID_INSTANCE());
-        require(instances[addr].validSince == 0, TEE_ALREADY_ATTESTED());
+    function _addInstance(address _addr, uint64 _validSince) private {
+        require(_addr != address(0), TEE_INVALID_INSTANCE());
+        require(instances[_addr].validSince == 0, TEE_ALREADY_ATTESTED());
 
-        instances[addr] = TeeInstance(validSince);
+        instances[_addr] = TeeInstance(_validSince);
 
         emit InstanceAdded(
-            addr,
+            _addr,
             address(0),
-            validSince,
-            validSince + INSTANCE_EXPIRY
+            _validSince,
+            _validSince + INSTANCE_EXPIRY
         );
     }
 
