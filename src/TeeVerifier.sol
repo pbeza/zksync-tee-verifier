@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import {V3Quote} from "automata-dcap-attestation/contracts/types/V3Structs.sol";
+import {AutomataDcapAttestation} from "automata-dcap-attestation/contracts/AutomataDcapAttestation.sol";
+// import {V3Quote} from "automata-dcap-attestation/contracts/types/V3Structs.sol";
 // import "@automata-network/on-chain-pccs";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 // import "src/shared/common/EssentialContract.sol";
@@ -13,8 +14,8 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 // import "./IVerifier.sol";
 
 /// @title TeeVerifier
-/// @notice Registers public keys to verify state transition signatures by the off-chain TEE prover.
-/// Uses Automata's on-chain Intel DCAP Quote Verifier to ensure keys were generated in a secure
+/// @notice Registers public keys to verify state transition signatures created by the off-chain TEE
+/// prover. Uses Automata's on-chain DCAP Quote Verifier to ensure keys are generated in a secure
 /// enclave. Inspired by the MIT-licensed Taiko implementation. Supports both Intel SGX and TDX.
 /// @dev To learn more, see:
 /// - Original idea:
@@ -25,16 +26,15 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 ///   https://github.com/taikoxyz/taiko-mono/blob/de92b28c03b747845a8a1aa26991307d1ed47fd0/packages/protocol/contracts/layer1/verifiers/SgxVerifier.sol
 /// @custom:security-contact security@matterlabs.dev
 contract TeeVerifier {
-    /// @dev Information about the validity of key pairs (instances) attested and registered in this
-    /// contract.
+    /// @dev Validity of key pairs (instances) attested and registered in this contract.
     struct TeeInstance {
         uint64 validSince;
     }
 
-    /// @notice The maximum expiry time for the key pair (TeeInstance). After this time, a new key pair
-    /// must be regenerated off-chain, re-attested, and re-registered on-chain. The actual validity
-    /// can be shorter if the attestation determines so (e.g., due to certificate expiration) or if
-    /// the TEE prover decides to generate a new key pair earlier.
+    /// @notice The maximum expiry time for the key pair (TeeInstance). After this time, a new key
+    /// pair must be regenerated off-chain, re-attested, and re-registered on-chain. The actual
+    /// validity can be shorter if the attestation determines so (e.g., due to certificate
+    /// expiration) or if the TEE prover decides to generate a new key pair earlier.
     uint64 public constant INSTANCE_EXPIRY = 60 days;
 
     /// @dev Collection of all public keys registered on-chain. The off-chain TEE prover uses the
@@ -46,26 +46,33 @@ contract TeeVerifier {
     /// signer address retrieval.
     mapping(address => TeeInstance) public instances;
 
-    uint256[49] private __gap;
+    AutomataDcapAttestation attest;
+
+    uint256[48] private __gap;
+
+    constructor(address _attest) {
+        require(_attest != address(0), TEE_RA_NOT_SUPPORTED());
+        attest = AutomataDcapAttestation(_attest);
+    }
 
     /// @notice Emitted when a new instance is added or replaced.
-    /// @param old_instance The address of the new instance.
-    /// @param new_instance The address of the instance that was replaced. If it is the first instance,
+    /// @param new_instance The address of the new instance.
+    /// @param old_instance The address of the instance that was replaced. If it is the first instance,
     /// this value is the zero address.
     /// @param validSince The time since the instance is valid.
     /// @param validUntil The time until the instance is valid.
     event InstanceAdded(
-        address indexed old_instance,
         address indexed new_instance,
+        address indexed old_instance,
         uint256 validSince,
         uint256 validUntil
     );
 
     error TEE_ALREADY_ATTESTED();
     error TEE_INVALID_INSTANCE();
-    // error TEE_INVALID_ATTESTATION();
+    error TEE_RA_NOT_SUPPORTED();
+    error TEE_INVALID_ATTESTATION(string errorMsg);
     // error TEE_INVALID_PROOF();
-    // error TEE_RA_NOT_SUPPORTED();
 
     // /// @notice Initializes the contract.
     // /// @param _owner The owner of this contract. msg.sender will be used if this value is zero.
@@ -91,29 +98,23 @@ contract TeeVerifier {
     //     }
     // }
 
-    function registerSgxInstance(V3Quote calldata attestation) external {
-        this.registerSgxInstance(attestation, 0);
+    function registerInstance(bytes calldata quote) external {
+        this.registerInstance(quote, 0);
     }
 
     /// @notice Adds an SGX instance after verifying the attestation.
-    /// @param attestation The parsed attestation quote.
-    /// @param validity_delay_in_seconds Delay before an instance becomes valid.
-    function registerSgxInstance(
-        V3Quote calldata attestation,
+    /// @param quote The attestation quote.
+    /// @param validity_delay_in_seconds Delay in seconds before an instance becomes valid.
+    function registerInstance(
+        bytes calldata quote,
         uint64 validity_delay_in_seconds
     ) external {
-        // TODO verify attestation before registration
-        // address automataDcapAttestation = resolve(
-        //     LibStrings.B_AUTOMATA_DCAP_ATTESTATION,
-        //     true
-        // );
-        // require(automataDcapAttestation != address(0), SGX_RA_NOT_SUPPORTED());
-        // (bool verified, ) = IAttestation(automataDcapAttestation)
-        //     .verifyParsedQuote(attestation);
-        // require(verified, SGX_INVALID_ATTESTATION());
-        address addr = address(
-            bytes20(attestation.localEnclaveReport.reportData)
+        (bool verified, bytes memory errMsg) = attest.verifyAndAttestOnChain(
+            quote
         );
+
+        require(verified, TEE_INVALID_ATTESTATION(string(errMsg)));
+        address addr = address(bytes20(quote[28:48]));
         uint64 valid_since = uint64(block.timestamp) +
             validity_delay_in_seconds;
         _addInstance(addr, valid_since);
@@ -126,8 +127,8 @@ contract TeeVerifier {
         instances[addr] = TeeInstance(validSince);
 
         emit InstanceAdded(
-            address(0),
             addr,
+            address(0),
             validSince,
             validSince + INSTANCE_EXPIRY
         );
